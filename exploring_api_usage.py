@@ -4,7 +4,7 @@ Created on Mon Mar  3 16:08:38 2025
 
 @author: Dilaksan Thillaithevan
 
-Test script for exploring the EA API
+Testing API usage and implementing basic functions needed to solve coding task.
 
 Notes
 # List of measures
@@ -14,16 +14,11 @@ To list all readings from a particular station:
 https://environment.data.gov.uk/flood-monitoring/id/stations/{id}/readings
 
 """
-import json
+
 from datetime import datetime, timedelta
-import argparse
 import requests
-from requests.models import Response
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
 
 
 BASE_URL = "https://environment.data.gov.uk/flood-monitoring"
@@ -246,22 +241,10 @@ def plot_data(
     )
 
     plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
-
-    # sess = create_session()
-    # data = base_api()
-    # ex = filter_by_station_name("River Wey")
-
-    # stations = find_stations_by_parameter('flow')
-
-    # start = datetime(2025, 3, 1)
-    # end = datetime(2025, 3, 2)
-    # data = get_station_measurement_hist('E2534',
-    #                                     start_end_date = (start, end),
-    #                                     since_date = None,
-    #                                     measure_name = 'flow')
 
     param = "flow"
     data = get_station_measurement_hist_prev_24_hrs("E2534", measure_name=param)
