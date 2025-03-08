@@ -5,5 +5,5 @@
 - Search for station by (partial) name
 - Fetch station information
 - Fetch station measurements
-- Print readings for given station(s) over specified time frame
-- Plot readings for given station(s) over specified time frame
+- Print readings for given station(s) over specified time frame (default option provided for readings over past 24 hours)
+- Plot readings for given station(s) over specified time frame (default option provided for readings over past 24 hours)
