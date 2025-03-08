@@ -14,8 +14,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+MEASURE_TYPES = {
+    "level": "Water level, see qualifier for whether stage or downstream of the stage, see unitName for whether relative to the stage datum (mASD) or to the ordnance datum.",
+    "flow": "Water flow rate, only available from some stations. The units of measurement vary between stations so check the unitName carefully.",
+    "temperature": "Dry bulb air temperature measurement available from some stations.",
+    "wind": "Wind direction and speed available from some stations. The qualifier will indicate whether direction (degrees) or speed (knots or m/s).",
+}
+
+
 class APIClient:
 
+    STATIONS_ENDPOINT = "id/stations"
     STATION_ENDPOINT = "id/stations/?stationReference={station_id}"
     MEASURES_ENDPOINT = "id/stations/{station_id}/measures"
     DATE_FILTER_ENDPOINT = (
@@ -26,10 +35,11 @@ class APIClient:
     READINGS_DATE_FILTER = "/readings?startdate={start_date}&enddate={end_date}"
     BASE_URL = "https://environment.data.gov.uk/flood-monitoring"
     DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+    DATETIME_FORMAT_DF = "%d-%m-%YT%H:%M:%SZ"
     DATE_FORMAT = "%Y-%m-%d"
 
     # Taken from https://environment.data.gov.uk/flood-monitoring/doc/reference#:~:text=The%20list%20of%20currently%20available%20types%20of%20measurement%20are:
-    MEASURE_PARAMETER_NAMES = ["level", "flow", "wind", "temperature"]
+    MEASURE_PARAMETER_NAMES = list(MEASURE_TYPES.keys())
 
     def get_api_response(self, endpoint_extension: str = None) -> dict:
         """
@@ -49,11 +59,14 @@ class APIClient:
         else:
             endpoint = endpoint_extension
 
-        print(f"Requesting endpoint: {endpoint}")
+        # print(f"Requesting endpoint: {endpoint}")
         response = session.get(endpoint)
         response.raise_for_status()
-        print("\tSuccessful request")
-        return response.json()["items"]
+        out = response.json()["items"]
+        if len(out) == 0:
+            return None
+        else:
+            return out
 
     def check_valid_station_id(self, station_id: str) -> None:
         """Ceheck if station id is valid"""
@@ -94,7 +107,7 @@ class APIClient:
         )
 
     def get_station_info(self, station_id: int) -> dict:
-        endpoint = self.MEASURES_ENDPOINT.format(station_id=station_id)
+        endpoint = self.STATION_ENDPOINT.format(station_id=station_id)
         return self.get_api_response(endpoint)
 
     def check_station_measure(self, station_id: int, measure_name: str) -> None:
@@ -104,7 +117,9 @@ class APIClient:
             measure_name in station_measures
         ), f"Station does not measure: {measure_name}. Valid station measures are {station_measures}"
 
-    def station_name_to_ids(self, station_name: str) -> list:
+    def station_name_to_ids(
+        self, station_name: str, print_on_error: bool = True
+    ) -> list:
         """Gets list of station ids that (partially) match the given station name.
         Returns list of station ids and associated station names"""
 
@@ -112,10 +127,17 @@ class APIClient:
 
         endpoint_ext = f"id/stations?search={station_name}"
         data = self.get_api_response(endpoint_ext)
+        if data is None:
+            if print_on_error:
+                print(
+                    f"No stations with term {station_name} :( Try a different search term",
+                    flush=True,
+                )
+            return [], []
+        else:
+            names, ids = zip(*[(d["label"], d["stationReference"]) for d in data])
 
-        names, ids = zip(*[(d["label"], d["stationReference"]) for d in data])
-
-        return (names, ids)
+            return list(names), list(ids)
 
     def check_is_valid_measure(self, measure_name: str) -> None:
         # measure_name = measure_name.lower()
@@ -173,14 +195,14 @@ class APIClient:
 
     def get_station_readings(
         self,
-        station_id: int,
+        station_id: str,
+        station_name: str,
         start_end_date: tuple[datetime, datetime | None],
         measure_name: str = None,
     ) -> pd.DataFrame:
         """Get the readings for a station within given start-end date tuple.
         If end date is not specifed all readings from start date to current date"""
 
-        print(measure_name)
         # Check measure id is valid
         if measure_name is not None:
             self.check_is_valid_measure(measure_name)
@@ -220,11 +242,6 @@ class APIClient:
             ]
             measure_names = [measure_name]
 
-            # endpoint = self.create_date_filter_endpoint(station_id, start_end_date)
-            # endpoint += f"&parameter={measure_name}"
-            # endpoints = [endpoint]
-            # measure_names = [measure_name]
-
         # If no measure name is provided get all readings
         else:
             measure_names, endpoints, units, qualifiers = self.get_station_measures(
@@ -239,10 +256,11 @@ class APIClient:
         dfs = []
         for measure, endpoint in zip(measure_names, endpoints):
             data = self.get_api_response(endpoint)
-            dfs += [self.post_process_station_measurement_data(data, measure)]
+            if data is not None:
+                dfs += [self.post_process_station_measurement_data(data, measure)]
 
         measurement_info = {
-            m: {"qualifier": q, "unit": u}
+            m: {"qualifier": q, "unit": u, "name": station_name, "measurement_name": m}
             for m, q, u in zip(measure_names, qualifiers, units)
         }
 
@@ -272,6 +290,14 @@ class APIClient:
 
         return self.create_measurement_df(dates, values, measurement_name)
 
+    def get_all_station_ids(
+        self,
+    ) -> tuple[list[str], list[str]]:
+
+        data = self.get_api_response(self.STATIONS_ENDPOINT)
+
+        return zip(*[(d["notation"], d["label"]) for d in data])
+
     def create_measurement_df(
         self,
         dates: list[datetime],
@@ -280,21 +306,25 @@ class APIClient:
     ) -> pd.DataFrame:
 
         df = pd.DataFrame({"Date": dates, measurement_name: measurements})
-        df["Date"] = pd.to_datetime(df["Date"], format=self.DATE_FORMAT)
+        df["Date"] = pd.to_datetime(df["Date"], format=self.DATETIME_FORMAT_DF)
         df = df.sort_values(by="Date")
 
         return df
+
+    def get_station_name_from_id(self, station_id: str) -> str:
+        data = self.get_station_info(station_id)
+        return data[0]["label"].title()
 
 
 if __name__ == "__main__":
 
     client = APIClient()
 
-    print(client.get_station_measures("E2534"))
+    # print(client.get_station_measures("E2534"))
     # print (client.station_name_to_ids("River"))
     # print (client.station_name_to_ids("River"))
-    print(
-        client.get_station_readings(
-            "E2534", (get_time_24hrs_ago(), None), measure_name="flow"
-        )
-    )
+    # print(
+    #     client.get_station_readings(
+    #         "E2534", (get_time_24hrs_ago(), None), measure_name="flow"
+    #     )
+    # )
